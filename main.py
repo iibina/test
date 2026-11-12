@@ -1,3 +1,4 @@
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -28,11 +29,62 @@ MONTH_OPTIONS = ["사용 안 함", "숫자 그대로 (직선)", "월별 따로 (
 # ------------------------------------------------------------------
 # 데이터 불러오기
 # ------------------------------------------------------------------
+COLUMN_ALIASES = {
+    "월": ["월", "month", "달"],
+    "요일특성": ["요일특성", "요일", "요일구분", "요일별", "구분", "daytype"],
+    "시간": ["시간", "시간대", "시", "hour"],
+    "전력소비계수": ["전력소비계수", "소비계수", "계수", "전력소비", "value"],
+}
+
+
+def clean_name(name) -> str:
+    """열 이름의 BOM, 공백, 따옴표를 없애고 한글 유니코드를 통일한다."""
+    text = unicodedata.normalize("NFC", str(name))
+    for ch in ("\ufeff", "\u200b", "\xa0", '"', "'"):
+        text = text.replace(ch, "")
+    return "".join(text.split()).lower()
+
+
+def standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """열 이름이 조금 달라도 표준 이름(월, 요일특성, 시간, 전력소비계수)으로 맞춘다."""
+    alias_lookup = {}
+    for standard, aliases in COLUMN_ALIASES.items():
+        for alias in aliases:
+            alias_lookup[clean_name(alias)] = standard
+
+    rename = {}
+    for col in df.columns:
+        standard = alias_lookup.get(clean_name(col))
+        if standard and standard not in rename.values():
+            rename[col] = standard
+    return df.rename(columns=rename)
+
+
 @st.cache_data
 def load_data(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, encoding="utf-8")
-    df.columns = [c.strip() for c in df.columns]
-    return df
+    last_error = None
+    for encoding in ("utf-8-sig", "cp949"):
+        try:
+            df = pd.read_csv(path, encoding=encoding)
+            break
+        except UnicodeDecodeError as err:
+            last_error = err
+    else:
+        raise last_error
+    return standardize_columns(df)
+
+
+def clean_values(df: pd.DataFrame) -> pd.DataFrame:
+    """'1월', '1시' 같은 글자가 섞여 있어도 숫자로 바꾸고, 요일특성 글자도 정리한다."""
+    df = df.copy()
+    for col in ("월", "시간"):
+        df[col] = pd.to_numeric(
+            df[col].astype(str).str.replace(r"[^0-9]", "", regex=True), errors="coerce"
+        )
+    df[TARGET] = pd.to_numeric(df[TARGET], errors="coerce")
+    day = df["요일특성"].astype(str).map(lambda x: unicodedata.normalize("NFC", x).strip())
+    df["요일특성"] = day
+    return df.dropna(subset=REQUIRED_COLUMNS)
 
 
 def get_data() -> pd.DataFrame:
@@ -49,11 +101,26 @@ def get_data() -> pd.DataFrame:
     if missing:
         st.error(f"데이터에 필요한 열이 없어요: {', '.join(missing)}")
         st.info(f"필요한 열: {', '.join(REQUIRED_COLUMNS)}")
+        st.warning(
+            "지금 파일에서 읽은 열 이름: "
+            + ", ".join(f"`{c}`" for c in df.columns)
+            + "\n\n올라가 있는 CSV가 변환된 `전력소비_전처리.csv`(열이 4개, 1,152행)인지 확인해 주세요."
+        )
         st.stop()
 
-    df = df[REQUIRED_COLUMNS].dropna().copy()
+    df = clean_values(df[REQUIRED_COLUMNS])
+
+    unknown = sorted(set(df["요일특성"]) - set(DAY_ORDER))
+    if unknown:
+        st.error("요일특성에 예상하지 못한 값이 있어요: " + ", ".join(unknown))
+        st.info("요일특성 값은 `" + "`, `".join(DAY_ORDER) + "` 네 가지여야 해요.")
+        st.stop()
+    if df.empty:
+        st.error("사용할 수 있는 행이 없어요. CSV 내용을 확인해 주세요.")
+        st.stop()
+
     df["요일특성"] = pd.Categorical(df["요일특성"], categories=DAY_ORDER, ordered=True)
-    return df
+    return df.reset_index(drop=True)
 
 
 # ------------------------------------------------------------------
