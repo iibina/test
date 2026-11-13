@@ -194,10 +194,7 @@ st.caption("선형회귀로 '요일'과 '시간대'가 전력소비계수를 얼
 
 df = get_data()
 
-if "runs" not in st.session_state:
-    st.session_state["runs"] = []
-
-tab_data, tab_lab, tab_compare = st.tabs(["📊 데이터 살펴보기", "🧪 모델 실습", "📋 실험 비교"])
+tab_data, tab_lab = st.tabs(["📊 데이터 살펴보기", "🧪 모델 실습"])
 
 # ------------------------------------------------------------------
 # 탭 1: 데이터 살펴보기
@@ -212,11 +209,6 @@ with tab_data:
 - **전력소비계수**: 요일특성별 평균이 약 1000이 되도록 맞춘 값
 """
     )
-    st.info(
-        "전력소비계수는 요일특성별 평균이 거의 같도록 맞춰져 있어서, **요일만으로는 값을 설명하기 어려워요.** "
-        "대신 하루 중 시간대별 모양이 중요해요."
-    )
-
     c1, c2, c3 = st.columns(3)
     c1.metric("행 수", f"{len(df):,}")
     c2.metric("열 수", len(df.columns))
@@ -279,10 +271,10 @@ with tab_lab:
     with st.expander("💡 이렇게 실습해 보세요", expanded=False):
         st.markdown(
             """
-1. **요일특성만** 켜고 시간은 '사용 안 함'으로 두면, 설명력(R²)이 얼마나 나오는지 확인해 보세요.
-2. 시간을 **숫자 그대로(직선)** 넣어 보세요. 하루 모양이 직선일까요?
-3. 시간을 **곡선(다항식)** 으로 바꾸고 차수를 올려 보세요. 훈련/테스트 점수 차이도 같이 보세요.
-4. 시간을 **시간대별 따로(원-핫)** 로 바꿔 보세요.
+1. 처음에는 **시간대별 따로(원-핫)** 로 학습된 결과를 먼저 살펴보세요.
+2. 시간 사용 방식을 **사용 안 함**으로 바꿔서 요일특성만 쓰면 설명력(R²)이 얼마나 떨어지는지 확인해 보세요.
+3. 시간을 **숫자 그대로(직선)** 로 넣어 보세요. 하루 모양이 직선일까요?
+4. 시간을 **곡선(다항식)** 으로 바꾸고 차수를 올려 보세요. 훈련/테스트 점수 차이도 같이 보세요.
 5. 마지막으로 **요일×시간 조합**을 켜서, 요일마다 다른 하루 모양을 학습시켜 보세요.
 """
         )
@@ -293,7 +285,7 @@ with tab_lab:
         st.markdown("**① 입력 변수 선택**")
         use_day = st.checkbox("요일특성 사용", value=True)
         month_mode = st.radio("월 사용 방식", MONTH_OPTIONS, index=0)
-        hour_mode = st.radio("시간 사용 방식", HOUR_OPTIONS, index=0)
+        hour_mode = st.radio("시간 사용 방식", HOUR_OPTIONS, index=3)
         degree = 2
         if hour_mode == "곡선 (다항식)":
             degree = st.slider("다항식 차수", 2, 10, 4)
@@ -341,7 +333,7 @@ with tab_lab:
 
             gap = m_train["R²"] - m_test["R²"]
             if m_test["R²"] < 0.1:
-                st.warning("설명력이 매우 낮아요. 시간대별 모양이 반영되고 있는지 확인해 보세요.")
+                st.warning("설명력이 매우 낮아요. '시간 사용 방식'을 '시간대별 따로(원-핫)'이나 '곡선(다항식)'으로 바꿔 보세요.")
             elif gap > 0.1:
                 st.warning("훈련 점수가 테스트 점수보다 꽤 높아요. 과적합이 아닌지 살펴보세요.")
             else:
@@ -400,61 +392,3 @@ with tab_lab:
                 yaxis_title="예측 전력소비계수",
             )
             st.plotly_chart(fig_sc, use_container_width=True)
-
-            # 실험 기록 추가
-            parts = []
-            if use_day:
-                parts.append("요일")
-            if month_mode != "사용 안 함":
-                parts.append("월:" + ("직선" if "직선" in month_mode else "원-핫"))
-            if hour_mode == "숫자 그대로 (직선)":
-                parts.append("시간:직선")
-            elif hour_mode == "곡선 (다항식)":
-                parts.append(f"시간:{degree}차 곡선")
-            elif hour_mode == "시간대별 따로 (원-핫)":
-                parts.append("시간:원-핫")
-            if combo:
-                parts.append("요일×시간")
-            label = " + ".join(parts)
-
-            if st.button("➕ 이 결과를 실험 비교표에 추가"):
-                st.session_state["runs"].append(
-                    {
-                        "실험": f"{len(st.session_state['runs']) + 1}. {label}",
-                        "입력 열 수": n_features,
-                        "훈련 R²": round(m_train["R²"], 3),
-                        "테스트 R²": round(m_test["R²"], 3),
-                        "테스트 MAE": round(m_test["MAE"], 1),
-                        "테스트 RMSE": round(m_test["RMSE"], 1),
-                    }
-                )
-                st.success("추가했어요! '실험 비교' 탭에서 확인해 보세요.")
-
-# ------------------------------------------------------------------
-# 탭 3: 실험 비교
-# ------------------------------------------------------------------
-with tab_compare:
-    st.subheader("실험 비교")
-    runs = st.session_state["runs"]
-    if not runs:
-        st.info("아직 기록된 실험이 없어요. '모델 실습' 탭에서 결과를 추가해 보세요.")
-    else:
-        runs_df = pd.DataFrame(runs)
-        st.dataframe(runs_df, use_container_width=True, hide_index=True)
-
-        long = runs_df.melt(
-            id_vars="실험",
-            value_vars=["훈련 R²", "테스트 R²"],
-            var_name="구분",
-            value_name="R²",
-        )
-        fig_cmp = px.bar(long, x="실험", y="R²", color="구분", barmode="group")
-        fig_cmp.update_layout(title="실험별 R² 비교", xaxis_title="")
-        st.plotly_chart(fig_cmp, use_container_width=True)
-
-        best = runs_df.loc[runs_df["테스트 R²"].idxmax()]
-        st.success(f"테스트 R²가 가장 높은 실험: **{best['실험']}** (R² = {best['테스트 R²']})")
-
-        if st.button("🗑️ 기록 모두 지우기"):
-            st.session_state["runs"] = []
-            st.rerun()
